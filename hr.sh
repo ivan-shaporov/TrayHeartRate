@@ -1,0 +1,1 @@
+curl --location --request GET 'https://api.ouraring.com/v2/usercollection/heartrate?start_datetime=2024-07-27T22:08:59' --header "Authorization: Bearer $token"
