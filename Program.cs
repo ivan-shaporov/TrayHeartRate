@@ -1,8 +1,9 @@
 ﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.UserSecrets;
+using OuraRing;
 using System.Drawing.Text;
 using System.Timers;
 using Timers = System.Timers;
-using BpmMeasurement = (System.DateTimeOffset At, int Bpm);
 
 namespace TrayHeartRate
 {
@@ -34,7 +35,7 @@ namespace TrayHeartRate
         [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
         extern static bool DestroyIcon(IntPtr handle);*/
 
-        static void DrawHeartRate(BpmMeasurement measurement)
+        static void DrawHeartRate(HeartRate measurement)
         {
             const int iconSize = 16; // maximum possible icon size
             var bmp = new Bitmap(iconSize, iconSize);
@@ -56,16 +57,21 @@ namespace TrayHeartRate
 
             var icon = Icon.FromHandle(bmp.GetHicon());
 
+            // older alternative way to dispose icon, might work better
             /*if (trayIcon.Icon != null)
             {
                 DestroyIcon(trayIcon.Icon.Handle);
             }*/
+
+            // new untested way to dispose icon
             trayIcon.Icon?.Dispose();
 
             trayIcon.Icon = icon;
 
-            trayIcon.Text = $"Heart rate at {DateTimeToTimeString(measurement.At)}: {heartRate}";
+            trayIcon.Text = $"{measurement.Source} heart rate at {DateTimeToTimeString(measurement.Timestamp)}: {heartRate}";
         }
+
+        private const string BpmAlertThresholdConfigKey = "bpm_alert_threshold";
 
         static async void Timer_Elapsed(object? sender, ElapsedEventArgs e)
         {
@@ -78,35 +84,45 @@ namespace TrayHeartRate
                 DateTimeOffset.UtcNow.AddMinutes(-120) :
                 lastHeartRateTime.AddSeconds(1);
 
-            BpmMeasurement? measurement = await OuraRingClient!.GetHeartRateAsync(start);
+            HeartRate? measurement = await OuraRingClient!.GetHeartRateAsync(start);
 
-            if (!measurement.HasValue)
+            if (measurement == null)
             {
                 return;
             }
 
-            int bpm = measurement.Value.Bpm;
-            lastHeartRateTime = measurement.Value.At;
-            DrawHeartRate(measurement.Value);
+            int bpm = measurement.Bpm;
+            lastHeartRateTime = measurement.Timestamp;
+            DrawHeartRate(measurement);
 
             if (IsBpmOverThreshold(bpm))
             {
-                trayIcon.ShowBalloonTip(10000, $"Heart rate at {DateTimeToTimeString(lastHeartRateTime)}:", $"{bpm}", ToolTipIcon.Warning);
+                trayIcon.ShowBalloonTip(10000, $"{measurement.Source} heart rate at {DateTimeToTimeString(lastHeartRateTime)}:", $"{bpm}", ToolTipIcon.Warning);
             }
         }
 
         static string DateTimeToTimeString(DateTimeOffset dateTime) => dateTime.ToLocalTime().ToString("H:mm:ss");
 
-        static bool IsBpmOverThreshold(int bpm) => bpm > int.Parse(configuration["BpmAlertThreshold"]);
+        static bool IsBpmOverThreshold(int bpm) => bpm > int.Parse(configuration[BpmAlertThresholdConfigKey]);
 
         static void Main()
         {
-            /*var config = new ConfigurationBuilder()
-                .AddUserSecrets<Program>()
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                .Build();*/
+            string oura_personal_token = configuration["oura_personal_token"];
 
-            OuraRingClient = new OuraRingClient(configuration["oura_personal_token"]);
+            if (string.IsNullOrEmpty(oura_personal_token))
+            {
+                var userSecretsPath = PathHelper.GetSecretsPathFromSecretsId(oura_personal_token);
+                Console.WriteLine($"Set oura_personal_token in {userSecretsPath} file.");
+                return;
+            }
+
+            var tmp = configuration[BpmAlertThresholdConfigKey];
+            if (string.IsNullOrEmpty(tmp))
+            {
+                throw new InvalidOperationException($"Set {BpmAlertThresholdConfigKey} in appsettings.json file.");
+            }
+
+            OuraRingClient = new OuraRingClient(oura_personal_token);
 
             trayIcon.ContextMenuStrip!.Items.Add("Quit", null, (s, e) => Application.Exit());
 
