@@ -21,7 +21,7 @@ namespace TrayHeartRate
         static readonly Brush alertTextBrush = Brushes.Red;
 
         static readonly Font backFont = new("Arial", 24);
-        static readonly SolidBrush backBrush = new(Color.DarkGray);
+        static readonly Brush backBrush = Brushes.Pink;
 
         static OuraRingClient? OuraRingClient;
 
@@ -41,11 +41,6 @@ namespace TrayHeartRate
             const int iconSize = 32;
             var bmp = new Bitmap(iconSize, iconSize);
             using var img = Graphics.FromImage(bmp);
-
-            Color backgroundColor = ColorPicker.GetTaskBarBackgroundColor();
-            SolidBrush backgroundBrush = new(backgroundColor);
-
-            img.FillRectangle(backgroundBrush, 0, 0, iconSize, iconSize);
 
             if (measurement != null)
             {
