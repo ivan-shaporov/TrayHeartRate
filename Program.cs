@@ -13,6 +13,8 @@ namespace TrayHeartRate
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
+        const int iconSize = 32;
+
         static readonly Font font = new("Arial Narrow", 27, FontStyle.Bold);
         static readonly Font fontNarrow = new("Arial Narrow", 19);
 
@@ -36,12 +38,8 @@ namespace TrayHeartRate
             ContextMenuStrip = new ContextMenuStrip(),
         };
 
-        static void DrawHeartRate(HeartRate? measurement)
+        static void DrawHeartRate(HeartRate? measurement, Graphics img)
         {
-            const int iconSize = 32;
-            var bmp = new Bitmap(iconSize, iconSize);
-            using var img = Graphics.FromImage(bmp);
-
             if (measurement != null)
             {
                 int heartRate = measurement.Bpm;
@@ -59,12 +57,6 @@ namespace TrayHeartRate
             {
                 img.DrawString("❤", backFont, backBrush, new PointF(-6, 0));
             }
-
-            var icon = Icon.FromHandle(bmp.GetHicon());
-
-            trayIcon.Icon?.Dispose();
-
-            trayIcon.Icon = icon;
         }
 
         private static void DrawStringOutlined(Graphics img, string s, Font font, Brush brush, PointF point)
@@ -76,10 +68,7 @@ namespace TrayHeartRate
             img.DrawString(s, font, brush, point);
         }
 
-        static async void Timer_Elapsed(object? sender, ElapsedEventArgs e)
-        {
-            await RereshIcon();
-        }
+        static async void Timer_Elapsed(object? sender, ElapsedEventArgs e) => await RereshIcon();
 
         static async Task RereshIcon()
         {
@@ -87,10 +76,29 @@ namespace TrayHeartRate
                 DateTimeOffset.UtcNow.AddMinutes(-120) :
                 lastHeartRateTime.AddSeconds(1);
 
-            HeartRate? measurement = await OuraRingClient!.GetHeartRateAsync(start);
-            DrawHeartRate(measurement);
+            var bmp = new Bitmap(iconSize, iconSize);
+            using var img = Graphics.FromImage(bmp);
 
-            if (measurement == null)
+            HeartRate? measurement = null;
+
+            try
+            { 
+                measurement = await OuraRingClient!.GetHeartRateAsync(start);
+                DrawHeartRate(measurement, img);
+            }
+            catch (OuraClientException)
+            {
+                DrawStringOutlined(img, "🚫", new Font("Segoe UI Symbol", 18), alertTextBrush, new PointF(-2, -4));
+                trayIcon.Text = "Failed to get measurements.";
+            }
+
+            var icon = Icon.FromHandle(bmp.GetHicon());
+
+            trayIcon.Icon?.Dispose();
+
+            trayIcon.Icon = icon;
+
+            if (measurement is null)
             {
                 return;
             }
