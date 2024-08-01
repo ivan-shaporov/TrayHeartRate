@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.UserSecrets;
 using OuraRing;
-using System.Drawing.Text;
 using System.Timers;
 using Timers = System.Timers;
 
@@ -14,6 +13,22 @@ namespace TrayHeartRate
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
+        static readonly Font font = new("Arial Narrow", 27, FontStyle.Bold);
+        static readonly Font fontNarrow = new("Arial Narrow", 19);
+
+        static readonly Brush textBrush = Brushes.White;
+        static readonly Brush textOutlineBrush = Brushes.Black;
+        static readonly Brush alertTextBrush = Brushes.Red;
+
+        static readonly Font backFont = new("Arial", 24);
+        static readonly SolidBrush backBrush = new(Color.DarkGray);
+
+        static OuraRingClient? OuraRingClient;
+
+        static DateTimeOffset lastHeartRateTime = DateTimeOffset.MinValue;
+
+        private const string BpmAlertThresholdConfigKey = "bpm_alert_threshold";
+
         static readonly NotifyIcon trayIcon = new()
         {
             BalloonTipIcon = ToolTipIcon.Info,
@@ -21,57 +36,50 @@ namespace TrayHeartRate
             ContextMenuStrip = new ContextMenuStrip(),
         };
 
-        static readonly Font font = new("Arial Narrow", 9);
-        static readonly Font fontNarrow = new("Arial Narrow", 7);
-        static readonly SolidBrush brush = new(Color.Black);
-        static readonly SolidBrush brushAlert = new(Color.DarkRed);
-        static readonly SolidBrush backBrush = new(Color.White);
-
-        static OuraRingClient? OuraRingClient;
-
-        static DateTimeOffset lastHeartRateTime = DateTimeOffset.MinValue;
-
-        /* replaced with .Dispose()
-        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
-        extern static bool DestroyIcon(IntPtr handle);*/
-
-        static void DrawHeartRate(HeartRate measurement)
+        static void DrawHeartRate(HeartRate? measurement)
         {
-            const int iconSize = 16; // maximum possible icon size
+            const int iconSize = 32;
             var bmp = new Bitmap(iconSize, iconSize);
             using var img = Graphics.FromImage(bmp);
 
-            img.FillRectangle(backBrush, 0, 0, iconSize, iconSize);
+            Color backgroundColor = ColorPicker.GetTaskBarBackgroundColor();
+            SolidBrush backgroundBrush = new(backgroundColor);
 
-            img.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+            img.FillRectangle(backgroundBrush, 0, 0, iconSize, iconSize);
 
-            int heartRate = measurement.Bpm;
+            if (measurement != null)
+            {
+                int heartRate = measurement.Bpm;
 
-            bool alert = IsBpmOverThreshold(heartRate);
+                bool alert = IsBpmOverThreshold(heartRate);
+                DrawStringOutlined(img,
+                    $"{heartRate}",
+                    heartRate > 99 ? fontNarrow : font,
+                    alert ? alertTextBrush : textBrush,
+                    heartRate > 99 ? new PointF(-6, -2) : new PointF(-6, -4));
 
-            img.DrawString(
-                $"{heartRate}",
-                heartRate > 99 ? fontNarrow : font,
-                alert ? brushAlert : brush,
-                new PointF(0.0F, 0.0F));
+                trayIcon.Text = $"{measurement.Source} heart rate at {DateTimeToTimeString(measurement.Timestamp)}: {heartRate}";
+            }
+            else
+            {
+                img.DrawString("❤", backFont, backBrush, new PointF(-6, 0));
+            }
 
             var icon = Icon.FromHandle(bmp.GetHicon());
 
-            // older alternative way to dispose icon, might work better
-            /*if (trayIcon.Icon != null)
-            {
-                DestroyIcon(trayIcon.Icon.Handle);
-            }*/
-
-            // new untested way to dispose icon
             trayIcon.Icon?.Dispose();
 
             trayIcon.Icon = icon;
-
-            trayIcon.Text = $"{measurement.Source} heart rate at {DateTimeToTimeString(measurement.Timestamp)}: {heartRate}";
         }
 
-        private const string BpmAlertThresholdConfigKey = "bpm_alert_threshold";
+        private static void DrawStringOutlined(Graphics img, string s, Font font, Brush brush, PointF point)
+        {
+            img.DrawString(s, font, textOutlineBrush, point.X - 1, point.Y - 1);
+            img.DrawString(s, font, textOutlineBrush, point.X - 1, point.Y + 1);
+            img.DrawString(s, font, textOutlineBrush, point.X + 1, point.Y - 1);
+            img.DrawString(s, font, textOutlineBrush, point.X + 1, point.Y + 1);
+            img.DrawString(s, font, brush, point);
+        }
 
         static async void Timer_Elapsed(object? sender, ElapsedEventArgs e)
         {
@@ -85,6 +93,7 @@ namespace TrayHeartRate
                 lastHeartRateTime.AddSeconds(1);
 
             HeartRate? measurement = await OuraRingClient!.GetHeartRateAsync(start);
+            DrawHeartRate(measurement);
 
             if (measurement == null)
             {
@@ -93,7 +102,6 @@ namespace TrayHeartRate
 
             int bpm = measurement.Bpm;
             lastHeartRateTime = measurement.Timestamp;
-            DrawHeartRate(measurement);
 
             if (IsBpmOverThreshold(bpm))
             {
@@ -103,7 +111,10 @@ namespace TrayHeartRate
 
         static string DateTimeToTimeString(DateTimeOffset dateTime) => dateTime.ToLocalTime().ToString("H:mm:ss");
 
-        static bool IsBpmOverThreshold(int bpm) => bpm > int.Parse(configuration[BpmAlertThresholdConfigKey]);
+        static string BpmThresholdConfig => configuration[BpmAlertThresholdConfigKey];
+
+        static bool IsBpmOverThreshold(int bpm) => bpm > int.Parse(BpmThresholdConfig ??
+            throw new InvalidOperationException($"Set {BpmAlertThresholdConfigKey} in appsettings.json file."));
 
         static void Main()
         {
@@ -116,8 +127,7 @@ namespace TrayHeartRate
                 return;
             }
 
-            var tmp = configuration[BpmAlertThresholdConfigKey];
-            if (string.IsNullOrEmpty(tmp))
+            if (string.IsNullOrEmpty(BpmThresholdConfig))
             {
                 throw new InvalidOperationException($"Set {BpmAlertThresholdConfigKey} in appsettings.json file.");
             }
